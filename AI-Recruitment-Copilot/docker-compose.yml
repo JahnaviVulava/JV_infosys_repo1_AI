@@ -1,0 +1,26 @@
+version: '3.9'
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: recruitment_ai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  backend:
+    build: .
+    environment:
+      DATABASE_URL: mysql+pymysql://root:password@db:3306/recruitment_ai
+      UPLOAD_DIR: uploads
+      SECRET_KEY: change-me-to-a-long-secure-key
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+volumes:
+  mysql_data:
