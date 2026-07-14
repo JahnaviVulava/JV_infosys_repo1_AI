@@ -420,7 +420,13 @@ section[data-testid="stSidebar"] { background: #111827; color: #f8fafc; padding-
 div[data-testid="stAppViewContainer"] .stButton>button { background-color: #2563eb; color: white; border-radius: 10px; border: none; }
 div[data-testid="stAppViewContainer"] .stButton>button:hover { background-color: #1d4ed8; }
 div[data-testid="stAppViewContainer"] .stButton>button:disabled { background-color: #334155; color: #64748b; }
-.stTextInput>div>div>input, .stTextArea>div>div>textarea { background-color: #111827; color: #e2e8f0; border: 1px solid #334155; }
+div[data-testid="stForm"] div[data-testid="InputInstructions"] { display: none !important; }
+div[data-testid="stFormSubmitButton"] > button { background: #2563eb !important; color: #ffffff !important; border: none !important; border-radius: 10px !important; font-weight: 700 !important; }
+div[data-testid="stFormSubmitButton"] > button:hover { background: #1d4ed8 !important; }
+div[data-testid="stFormSubmitButton"] > button p,
+div[data-testid="stFormSubmitButton"] > button span,
+div[data-testid="stFormSubmitButton"] > button div { color: #ffffff !important; }
+.stTextInput>div>div>input, .stTextArea>div>div>textarea { background-color: #111827; color: #e2e8f0; caret-color: #ffffff; border: 1px solid #334155; }
 .stSelectbox>div>div>div { background-color: #111827; color: #e2e8f0; }
 
 .sidebar-brand { display:flex; align-items:center; gap:0.6rem; padding: 0.25rem 1rem 1rem 1rem; }
@@ -576,7 +582,13 @@ section[data-testid="stSidebar"] { background: #ffffff; color: #0f172a; padding-
 div[data-testid="stAppViewContainer"] .stButton>button { background-color: #2563eb; color: white; border-radius: 10px; border: none; }
 div[data-testid="stAppViewContainer"] .stButton>button:hover { background-color: #1d4ed8; }
 div[data-testid="stAppViewContainer"] .stButton>button:disabled { background-color: #e2e8f0; color: #94a3b8; }
-.stTextInput>div>div>input, .stTextArea>div>div>textarea { background-color: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; }
+div[data-testid="stForm"] div[data-testid="InputInstructions"] { display: none !important; }
+div[data-testid="stFormSubmitButton"] > button { background: #2563eb !important; color: #ffffff !important; border: none !important; border-radius: 10px !important; font-weight: 700 !important; }
+div[data-testid="stFormSubmitButton"] > button:hover { background: #1d4ed8 !important; }
+div[data-testid="stFormSubmitButton"] > button p,
+div[data-testid="stFormSubmitButton"] > button span,
+div[data-testid="stFormSubmitButton"] > button div { color: #ffffff !important; }
+.stTextInput>div>div>input, .stTextArea>div>div>textarea { background-color: #f8fafc; color: #0f172a; caret-color: #0f172a; border: 1px solid #cbd5e1; }
 .stSelectbox>div>div>div { background-color: #f8fafc; color: #0f172a; }
 
 .sidebar-brand { display:flex; align-items:center; gap:0.6rem; padding: 0.25rem 1rem 1rem 1rem; }
@@ -747,6 +759,10 @@ def api_call(method: str, path: str, payload: dict[str, Any] | None = None, file
         if files:
             return requests.post(f"{BACKEND_URL}{path}", files=files, timeout=60)
         return requests.post(f"{BACKEND_URL}{path}", json=payload, timeout=20)
+    if method == "put":
+        return requests.put(f"{BACKEND_URL}{path}", json=payload, timeout=20)
+    if method == "delete":
+        return requests.delete(f"{BACKEND_URL}{path}", timeout=20)
     raise ValueError("Unsupported method")
 
 
@@ -1835,8 +1851,136 @@ elif section == "Candidates":
 
 elif section == "Job Postings":
     st.header("Job Postings")
-    st.markdown("<p class='section-subtitle'>Manage open roles and match candidate skills to job requirements.</p>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='section-subtitle'>Create and manage open roles.</p>",
+        unsafe_allow_html=True,
+    )
 
+    with st.form("create_job_form", clear_on_submit=True):
+        job_title = st.text_input("Job title *", placeholder="e.g. Python Developer")
+        company_name = st.text_input("Company name *", placeholder="e.g. Infosys")
+        description = st.text_area(
+            "Job description",
+            placeholder="Describe responsibilities, required skills, and qualifications.",
+        )
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            experience = st.text_input("Experience", placeholder="e.g. 2–4 years")
+        with col2:
+            location = st.text_input("Location", placeholder="e.g. Hyderabad")
+        with col3:
+            salary = st.text_input("Salary", placeholder="e.g. ₹6–8 LPA")
+
+        submitted = st.form_submit_button("Create job", use_container_width=True)
+
+    if submitted:
+        if not job_title.strip() or not company_name.strip():
+            st.error("Job title and company name are required.")
+        else:
+            payload = {
+                "job_title": job_title.strip(),
+                "company_name": company_name.strip(),
+                "description": description.strip() or None,
+                "experience": experience.strip() or None,
+                "location": location.strip() or None,
+                "salary": salary.strip() or None,
+            }
+
+            try:
+                response = api_call("post", "/jobs", payload=payload)
+
+                if response.status_code == 201:
+                    st.success("Job posting created successfully.")
+                    st.rerun()
+                else:
+                    st.error(f"Could not create job: {response.text}")
+            except requests.RequestException as exc:
+                st.error(f"Could not reach the backend: {exc}")
+
+    st.subheader("Open Job Postings")
+
+    try:
+        response = api_call("get", "/jobs")
+
+        if response.ok:
+            jobs = response.json()
+
+            if not jobs:
+                st.info("No job postings yet.")
+            else:
+                for job in jobs:
+                    st.markdown(
+                        f"""
+                        <div class="upload-card" style="margin-bottom: 1rem;">
+                            <h3 style="margin-bottom: 0.3rem;">{html.escape(job["job_title"])}</h3>
+                            <p style="margin: 0;"><strong>{html.escape(job["company_name"])}</strong></p>
+                            <p style="margin: 0.75rem 0;">{html.escape(job.get("description") or "No description provided.")}</p>
+                            <p style="margin: 0.5rem 0 0;">
+                                Experience: {html.escape(job.get("experience") or "-")}
+                                &nbsp; | &nbsp;
+                                Location: {html.escape(job.get("location") or "-")}
+                                &nbsp; | &nbsp;
+                                Salary: {html.escape(job.get("salary") or "-")}
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    with st.expander(f"Edit {job['job_title']}"):
+                        with st.form(f"edit_job_form_{job['job_id']}"):
+                            edit_title = st.text_input("Job title *", value=job["job_title"], key=f"edit_title_{job['job_id']}")
+                            edit_company = st.text_input("Company name *", value=job["company_name"], key=f"edit_company_{job['job_id']}")
+                            edit_description = st.text_area(
+                                "Job description",
+                                value=job.get("description") or "",
+                                key=f"edit_description_{job['job_id']}",
+                            )
+                            edit_col1, edit_col2, edit_col3 = st.columns(3)
+                            with edit_col1:
+                                edit_experience = st.text_input("Experience", value=job.get("experience") or "", key=f"edit_experience_{job['job_id']}")
+                            with edit_col2:
+                                edit_location = st.text_input("Location", value=job.get("location") or "", key=f"edit_location_{job['job_id']}")
+                            with edit_col3:
+                                edit_salary = st.text_input("Salary", value=job.get("salary") or "", key=f"edit_salary_{job['job_id']}")
+                            save_changes = st.form_submit_button("Save changes", use_container_width=True)
+
+                        if save_changes:
+                            if not edit_title.strip() or not edit_company.strip():
+                                st.error("Job title and company name are required.")
+                            else:
+                                update_payload = {
+                                    "job_title": edit_title.strip(),
+                                    "company_name": edit_company.strip(),
+                                    "description": edit_description.strip() or None,
+                                    "experience": edit_experience.strip() or None,
+                                    "location": edit_location.strip() or None,
+                                    "salary": edit_salary.strip() or None,
+                                }
+                                try:
+                                    update_response = api_call("put", f"/jobs/{job['job_id']}", payload=update_payload)
+                                    if update_response.ok:
+                                        st.success("Job posting updated successfully.")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"Could not update job: {update_response.text}")
+                                except requests.RequestException as exc:
+                                    st.error(f"Could not reach the backend: {exc}")
+
+                        if st.button("Delete this job", key=f"delete_job_{job['job_id']}"):
+                            try:
+                                delete_response = api_call("delete", f"/jobs/{job['job_id']}")
+                                if delete_response.ok:
+                                    st.rerun()
+                                else:
+                                    st.error(f"Could not delete job: {delete_response.text}")
+                            except requests.RequestException as exc:
+                                st.error(f"Could not reach the backend: {exc}")
+        else:
+            st.error(f"Could not load jobs: {response.text}")
+    except requests.RequestException as exc:
+        st.error(f"Could not reach the backend: {exc}")
+        
 elif section == "Analytics":
     st.header("Analytics")
     st.markdown("<p class='section-subtitle'>Insight into recruiter activity and candidate trends.</p>", unsafe_allow_html=True)

@@ -19,6 +19,6 @@ def get_db():
 
 
 def create_tables() -> None:
-    from backend.app.models import candidate, certification, education, project, recruiter, skill  # noqa: F401
+    from backend.app.models import candidate, certification, education,job, project, recruiter , skill  # noqa: F401
 
     Base.metadata.create_all(bind=engine)

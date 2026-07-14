@@ -6,7 +6,13 @@ from fastapi.responses import JSONResponse
 
 from backend.app.core.config import get_settings
 from backend.app.core.database import create_tables
-from backend.app.routers import auth_router, candidates_router, google_auth_router, health_router
+from backend.app.routers import (
+    auth_router,
+    candidates_router,
+    google_auth_router,
+    health_router,
+    jobs_router,
+)
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="1.0.0")
@@ -23,6 +29,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(google_auth_router)
 app.include_router(candidates_router)
+app.include_router(jobs_router)
 
 
 @app.on_event("startup")
