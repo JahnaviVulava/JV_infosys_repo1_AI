@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import inspect
+from sqlalchemy import func, inspect
 from sqlalchemy.orm import Session
 
 from backend.app.models.candidate import Candidate
@@ -49,20 +49,56 @@ class CandidateService:
         text = self.parser.parse_file(file_path)
         extracted = self.extractor.extract(text)
 
-        candidate_id = str(uuid.uuid4())
         candidate_name = extracted.get("name") or "Unknown"
-        candidate = Candidate(
-            candidate_id=candidate_id,
-            name=candidate_name,
-            email=extracted.get("email"),
-            phone=extracted.get("phone"),
-            linkedin=extracted.get("linkedin"),
-            github=extracted.get("github"),
-            portfolio=extracted.get("portfolio"),
-            resume_file=filename,
-            experience_years=extracted.get("experience_years"),
-        )
-        self.db.add(candidate)
+        email = extracted.get("email")
+        phone = extracted.get("phone")
+        linkedin = extracted.get("linkedin")
+
+        # Re-uploading the same person's resume updates that profile instead
+        # of creating another candidate row. Name alone is deliberately not
+        # used: different people can share a name.
+        candidate = None
+        if email:
+            candidate = self.db.query(Candidate).filter(func.lower(Candidate.email) == email.lower()).first()
+        if not candidate and linkedin:
+            candidate = self.db.query(Candidate).filter(func.lower(Candidate.linkedin) == linkedin.lower()).first()
+        if not candidate and phone and candidate_name != "Unknown":
+            candidate = self.db.query(Candidate).filter(
+                func.lower(Candidate.name) == candidate_name.lower(),
+                Candidate.phone == phone,
+            ).first()
+
+        is_existing_candidate = candidate is not None
+        if candidate:
+            candidate.name = candidate_name
+            candidate.email = email
+            candidate.phone = phone
+            candidate.linkedin = linkedin
+            candidate.github = extracted.get("github")
+            candidate.portfolio = extracted.get("portfolio")
+            candidate.address = extracted.get("address")
+            candidate.resume_file = filename
+            candidate.experience_years = extracted.get("experience_years")
+            candidate.educations.clear()
+            candidate.skills.clear()
+            candidate.projects.clear()
+            candidate.certifications.clear()
+            candidate_id = candidate.candidate_id
+        else:
+            candidate_id = str(uuid.uuid4())
+            candidate = Candidate(
+                candidate_id=candidate_id,
+                name=candidate_name,
+                email=email,
+                phone=phone,
+                linkedin=linkedin,
+                github=extracted.get("github"),
+                portfolio=extracted.get("portfolio"),
+                address=extracted.get("address"),
+                resume_file=filename,
+                experience_years=extracted.get("experience_years"),
+            )
+            self.db.add(candidate)
         self.db.flush()
 
         if extracted.get("education"):
@@ -129,6 +165,7 @@ class CandidateService:
             "linkedin": candidate.linkedin,
             "github": candidate.github,
             "portfolio": candidate.portfolio,
+            "address": candidate.address,
             "resume_file": candidate.resume_file,
             "experience_years": candidate.experience_years,
             "skills": extracted.get("skills", []),
@@ -136,4 +173,5 @@ class CandidateService:
             "projects": extracted.get("projects", []),
             "certifications": extracted.get("certifications", []),
             "languages": extracted.get("languages", []),
+            "updated_existing_candidate": is_existing_candidate,
         }

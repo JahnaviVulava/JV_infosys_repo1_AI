@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS job (
   job_title VARCHAR(255) NOT NULL,
   company_name VARCHAR(255) NOT NULL,
   description TEXT,
+  required_skills TEXT,
   experience VARCHAR(50),
   location VARCHAR(255),
   salary VARCHAR(50),

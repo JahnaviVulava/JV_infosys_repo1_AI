@@ -1863,6 +1863,11 @@ elif section == "Job Postings":
             "Job description",
             placeholder="Describe responsibilities, required skills, and qualifications.",
         )
+        required_skills = st.text_input(
+            "Required skills",
+            placeholder="e.g. Python, FastAPI, SQL, Docker",
+            help="Enter skills separated by commas. These are used for candidate matching.",
+        )
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1882,6 +1887,7 @@ elif section == "Job Postings":
                 "job_title": job_title.strip(),
                 "company_name": company_name.strip(),
                 "description": description.strip() or None,
+                "required_skills": required_skills.strip() or None,
                 "experience": experience.strip() or None,
                 "location": location.strip() or None,
                 "salary": salary.strip() or None,
@@ -1909,25 +1915,104 @@ elif section == "Job Postings":
             if not jobs:
                 st.info("No job postings yet.")
             else:
+                if "editing_job_id" not in st.session_state:
+                    st.session_state.editing_job_id = None
+                if "delete_job_id" not in st.session_state:
+                    st.session_state.delete_job_id = None
+                if "matching_job_id" not in st.session_state:
+                    st.session_state.matching_job_id = None
+
                 for job in jobs:
-                    st.markdown(
-                        f"""
-                        <div class="upload-card" style="margin-bottom: 1rem;">
-                            <h3 style="margin-bottom: 0.3rem;">{html.escape(job["job_title"])}</h3>
-                            <p style="margin: 0;"><strong>{html.escape(job["company_name"])}</strong></p>
-                            <p style="margin: 0.75rem 0;">{html.escape(job.get("description") or "No description provided.")}</p>
-                            <p style="margin: 0.5rem 0 0;">
-                                Experience: {html.escape(job.get("experience") or "-")}
-                                &nbsp; | &nbsp;
-                                Location: {html.escape(job.get("location") or "-")}
-                                &nbsp; | &nbsp;
-                                Salary: {html.escape(job.get("salary") or "-")}
-                            </p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    with st.expander(f"Edit {job['job_title']}"):
+                    with st.container(border=True):
+                        job_info_col, match_col, edit_col, delete_col = st.columns([7, 1, 1, 1])
+                        with job_info_col:
+                            st.markdown(f"### {html.escape(job['job_title'])}")
+                            st.markdown(f"**{html.escape(job['company_name'])}**")
+                            st.write(job.get("description") or "No description provided.")
+                            st.caption("Required skills: " + (job.get("required_skills") or "Not specified"))
+                            st.caption(
+                                f"Experience: {job.get('experience') or '-'}  |  "
+                                f"Location: {job.get('location') or '-'}  |  "
+                                f"Salary: {job.get('salary') or '-'}"
+                            )
+                        with match_col:
+                            if st.button("Open", key=f"open_job_{job['job_id']}", use_container_width=True):
+                                st.session_state.selected_job_id = job["job_id"]
+                                st.session_state.page = "Job Detail"
+                                st.rerun()
+                        with edit_col:
+                            if st.button("Edit", key=f"edit_job_{job['job_id']}", use_container_width=True):
+                                st.session_state.editing_job_id = job["job_id"]
+                                st.rerun()
+                        with delete_col:
+                            if st.button("Delete", key=f"delete_job_{job['job_id']}", use_container_width=True):
+                                st.session_state.delete_job_id = job["job_id"]
+                                st.rerun()
+
+                    if st.session_state.delete_job_id == job["job_id"]:
+                        st.warning(f"Delete '{job['job_title']}'? This cannot be undone.")
+                        confirm_col, cancel_col, _ = st.columns([1, 1, 6])
+                        with confirm_col:
+                            if st.button("Confirm delete", key=f"confirm_delete_{job['job_id']}", type="primary"):
+                                try:
+                                    delete_response = api_call("delete", f"/jobs/{job['job_id']}")
+                                    if delete_response.ok:
+                                        if st.session_state.editing_job_id == job["job_id"]:
+                                            st.session_state.editing_job_id = None
+                                        st.session_state.delete_job_id = None
+                                        st.rerun()
+                                    else:
+                                        st.error(f"Could not delete job: {delete_response.text}")
+                                except requests.RequestException as exc:
+                                    st.error(f"Could not reach the backend: {exc}")
+                        with cancel_col:
+                            if st.button("Cancel", key=f"cancel_delete_{job['job_id']}"):
+                                st.session_state.delete_job_id = None
+                                st.rerun()
+
+                    if st.session_state.matching_job_id == job["job_id"]:
+                        st.subheader(f"Candidate matches: {job['job_title']}")
+                        try:
+                            match_response = api_call("get", f"/jobs/{job['job_id']}/matches")
+                            if not match_response.ok:
+                                st.error(f"Could not analyse candidates: {match_response.text}")
+                            else:
+                                match_data = match_response.json()
+                                required_skills = match_data.get("required_skills", [])
+                                if not required_skills:
+                                    st.warning("No recognised skills were found in this job description. Add named skills such as Python, React, SQL, AWS, or Docker, then try again.")
+                                else:
+                                    st.caption("Required job skills: " + ", ".join(required_skills))
+                                    for candidate_match in match_data.get("matches", []):
+                                        with st.container(border=True):
+                                            score_col, details_col = st.columns([1, 6])
+                                            with score_col:
+                                                st.metric("Match", f"{candidate_match['match_score']}%")
+                                            with details_col:
+                                                st.markdown(f"**{html.escape(candidate_match['candidate_name'])}**")
+                                                experience_result = candidate_match.get("experience_match")
+                                                experience_label = "Yes" if experience_result else "No" if experience_result is False else "Not assessed"
+                                                st.caption(
+                                                    f"Experience: {candidate_match.get('candidate_experience') or '-'} | "
+                                                    f"Experience requirement met: {experience_label}"
+                                                )
+                                                st.write("Matched skills: " + (", ".join(candidate_match["matched_skills"]) or "None"))
+                                                st.write("Missing skills: " + (", ".join(candidate_match["missing_skills"]) or "None"))
+                                                st.write("Additional skills: " + (", ".join(candidate_match["additional_skills"]) or "None"))
+                                                location_result = candidate_match.get("location_match")
+                                                location_label = "Yes" if location_result else "No" if location_result is False else "Not assessed"
+                                                st.caption(
+                                                    f"Candidate location: {candidate_match.get('candidate_location') or 'Not available'} | "
+                                                    f"Job location: {candidate_match.get('job_location') or 'Not specified'} | "
+                                                    f"Location match: {location_label}"
+                                                )
+                                                st.caption("Education: " + (", ".join(candidate_match["education"]) or "Not available"))
+                                                st.caption("Certifications: " + (", ".join(candidate_match["certifications"]) or "Not available"))
+                        except requests.RequestException as exc:
+                            st.error(f"Could not reach the backend: {exc}")
+
+                    if st.session_state.editing_job_id == job["job_id"]:
+                        st.subheader(f"Edit {job['job_title']}")
                         with st.form(f"edit_job_form_{job['job_id']}"):
                             edit_title = st.text_input("Job title *", value=job["job_title"], key=f"edit_title_{job['job_id']}")
                             edit_company = st.text_input("Company name *", value=job["company_name"], key=f"edit_company_{job['job_id']}")
@@ -1935,6 +2020,11 @@ elif section == "Job Postings":
                                 "Job description",
                                 value=job.get("description") or "",
                                 key=f"edit_description_{job['job_id']}",
+                            )
+                            edit_required_skills = st.text_input(
+                                "Required skills",
+                                value=job.get("required_skills") or "",
+                                key=f"edit_required_skills_{job['job_id']}",
                             )
                             edit_col1, edit_col2, edit_col3 = st.columns(3)
                             with edit_col1:
@@ -1953,6 +2043,7 @@ elif section == "Job Postings":
                                     "job_title": edit_title.strip(),
                                     "company_name": edit_company.strip(),
                                     "description": edit_description.strip() or None,
+                                    "required_skills": edit_required_skills.strip() or None,
                                     "experience": edit_experience.strip() or None,
                                     "location": edit_location.strip() or None,
                                     "salary": edit_salary.strip() or None,
@@ -1960,30 +2051,589 @@ elif section == "Job Postings":
                                 try:
                                     update_response = api_call("put", f"/jobs/{job['job_id']}", payload=update_payload)
                                     if update_response.ok:
+                                        st.session_state.editing_job_id = None
                                         st.success("Job posting updated successfully.")
                                         st.rerun()
                                     else:
                                         st.error(f"Could not update job: {update_response.text}")
                                 except requests.RequestException as exc:
                                     st.error(f"Could not reach the backend: {exc}")
-
-                        if st.button("Delete this job", key=f"delete_job_{job['job_id']}"):
-                            try:
-                                delete_response = api_call("delete", f"/jobs/{job['job_id']}")
-                                if delete_response.ok:
-                                    st.rerun()
-                                else:
-                                    st.error(f"Could not delete job: {delete_response.text}")
-                            except requests.RequestException as exc:
-                                st.error(f"Could not reach the backend: {exc}")
         else:
             st.error(f"Could not load jobs: {response.text}")
     except requests.RequestException as exc:
         st.error(f"Could not reach the backend: {exc}")
         
+elif section == "Job Detail":
+    selected_job_id = st.session_state.get("selected_job_id")
+    if not selected_job_id:
+        st.session_state.page = "Job Postings"
+        st.rerun()
+
+    if st.button("← Back to job postings", key="back_to_job_postings"):
+        st.session_state.page = "Job Postings"
+        st.session_state.selected_job_id = None
+        st.session_state.show_matches_for = None
+        st.rerun()
+
+    try:
+        job_response = api_call("get", f"/jobs/{selected_job_id}")
+        if not job_response.ok:
+            st.error("This job posting could not be found.")
+        else:
+            selected_job = job_response.json()
+            st.header(selected_job["job_title"])
+            st.markdown(f"### {selected_job['company_name']}")
+            st.caption(
+                f"Experience: {selected_job.get('experience') or '-'}  |  "
+                f"Location: {selected_job.get('location') or '-'}  |  "
+                f"Salary: {selected_job.get('salary') or '-'}"
+            )
+            st.markdown("#### Job description")
+            st.write(selected_job.get("description") or "No description provided.")
+            st.markdown("#### Required skills")
+            st.write(selected_job.get("required_skills") or "Not specified")
+
+            if st.button("Match candidates", key="match_selected_job", type="primary", use_container_width=True):
+                st.session_state.show_matches_for = selected_job_id
+                st.rerun()
+
+            if st.session_state.get("show_matches_for") == selected_job_id:
+                st.markdown("## Candidate match results")
+                match_response = api_call("get", f"/jobs/{selected_job_id}/matches")
+                if not match_response.ok:
+                    st.error(f"Could not analyse candidates: {match_response.text}")
+                else:
+                    match_data = match_response.json()
+                    required = match_data.get("required_skills", [])
+                    if not required:
+                        st.warning("Add required skills to this job before matching candidates.")
+                    else:
+                        summary = match_data.get("summary", {})
+                        st.caption("Ranking: skills 75% • experience 20% • location 5%. Ties favour stronger skill coverage, fewer gaps, experience, certifications, education, then location.")
+                        required_badges = "".join(
+                            f"<span style='display:inline-block;margin:0 .3rem 0 0;padding:.18rem .5rem;border:1px solid #c7d2fe;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:.78rem;'>{html.escape(skill)}</span>"
+                            for skill in required
+                        )
+                        st.markdown(
+                            f"<div style='color:#475569;font-size:.8rem;margin:.55rem 0 1rem;'>Required skills &nbsp;{required_badges}</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        best_names = ", ".join(
+                            html.escape(item.get("display_name") or item["candidate_name"])
+                            for item in match_data.get("matches", [])
+                            if item["match_score"] == summary.get("top_score", 0)
+                        ) or "No candidate yet"
+                        st.markdown(
+                            f"""
+                            <div style='display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin:1rem 0 1.3rem;'>
+                              <div style='background:#fff;border:1px solid #dbe3f5;border-radius:16px;padding:1rem 1.35rem;'><div style='color:#475569;font-size:.76rem;'>Candidates analysed</div><div style='font-family:Georgia,serif;color:#0f172a;font-size:2rem;font-weight:700;line-height:1.25;'>{summary.get('candidate_count', 0)}</div><div style='color:#64748b;font-size:.72rem;'>across this role</div></div>
+                              <div style='background:#fff;border:1px solid #dbe3f5;border-radius:16px;padding:1rem 1.35rem;'><div style='color:#475569;font-size:.76rem;'>Best match</div><div style='font-family:Georgia,serif;color:#0f172a;font-size:2rem;font-weight:700;line-height:1.25;'>{summary.get('top_score', 0)}%</div><div style='color:#64748b;font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>{best_names}</div></div>
+                              <div style='background:#fff;border:1px solid #dbe3f5;border-radius:16px;padding:1rem 1.35rem;'><div style='color:#475569;font-size:.76rem;'>Average match</div><div style='font-family:Georgia,serif;color:#0f172a;font-size:2rem;font-weight:700;line-height:1.25;'>{summary.get('average_score', 0)}%</div><div style='color:#64748b;font-size:.72rem;'>across all candidates</div></div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                        match_rows = match_data.get("matches", [])
+                        if match_rows:
+                            ranking_rows = []
+                            for item in match_rows:
+                                score = item["match_score"]
+                                if score >= 80:
+                                    colour = "#16a34a"
+                                elif score >= 60:
+                                    colour = "#3b5bff"
+                                elif score >= 40:
+                                    colour = "#f59e0b"
+                                else:
+                                    colour = "#94a3b8"
+                                name = item.get("display_name") or item["candidate_name"]
+                                initials = "".join(part[0] for part in name.split()[:2]).upper() or "C"
+                                ranking_rows.append(
+                                    f"<div style='display:grid;grid-template-columns:2.2rem minmax(9rem,11rem) minmax(8rem,1fr) 3.5rem;gap:.65rem;align-items:center;padding:.65rem 0;border-bottom:1px solid #e2e8f0;'>"
+                                    f"<span style='width:1.7rem;height:1.7rem;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:{colour};color:#fff;font-size:.64rem;font-weight:700;'>{html.escape(initials)}</span>"
+                                    f"<span style='color:#172554;font-size:.88rem;font-weight:700;'>{html.escape(name)}</span>"
+                                    f"<span style='height:.68rem;background:#e9edf5;border-radius:999px;overflow:hidden;'><span style='display:block;height:100%;width:{score}%;background:{colour};border-radius:999px;'></span></span>"
+                                    f"<span style='text-align:right;color:{colour};font-size:.82rem;font-weight:700;'>{score}%</span></div>"
+                                )
+                            st.markdown(
+                                f"""
+                                <div style='background:#fff;border:1px solid #dbe3f5;border-radius:16px;padding:1.2rem 1.7rem;margin:1.2rem 0;'>
+                                  <div style='display:flex;justify-content:space-between;gap:1rem;align-items:center;'>
+                                    <h3 style='font-family:Georgia,serif;color:#0f172a;margin:0 0 .55rem;'>Candidate ranking</h3>
+                                    <span style='font-size:.72rem;color:#475569;white-space:nowrap;'><b style='color:#16a34a;'>●</b> Excellent &nbsp; <b style='color:#3b5bff;'>●</b> Strong &nbsp; <b style='color:#f59e0b;'>●</b> Potential &nbsp; <b style='color:#94a3b8;'>●</b> Limited</span>
+                                  </div>
+                                  {''.join(ranking_rows)}
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+
+                        gap_summary = match_data.get("skill_gap_summary", [])
+                        if gap_summary:
+                            gap_rows = []
+                            for item in gap_summary:
+                                missing = item["candidates_missing"]
+                                gap_percent = round((missing / len(match_rows)) * 100) if match_rows else 0
+                                gap_rows.append(
+                                    f"<div style='display:grid;grid-template-columns:6.5rem minmax(8rem,1fr) 3.5rem;gap:.7rem;align-items:center;padding:.55rem 0;'>"
+                                    f"<span style='color:#172554;font-weight:700;font-size:.84rem;'>{html.escape(item['skill'])}</span>"
+                                    f"<span style='height:.58rem;background:#e9edf5;border-radius:999px;overflow:hidden;'><span style='display:block;height:100%;width:{gap_percent}%;background:#f59e0b;border-radius:999px;'></span></span>"
+                                    f"<span style='color:#a16207;text-align:right;font-size:.8rem;font-weight:700;'>{missing}/{len(match_rows)}</span></div>"
+                                )
+                            st.markdown(
+                                f"""
+                                <div style='background:#fff;border:1px solid #dbe3f5;border-radius:16px;padding:1.2rem 1.7rem;margin:1.2rem 0;'>
+                                  <h3 style='font-family:Georgia,serif;color:#0f172a;margin:0 0 .55rem;'>Most common skill gaps</h3>
+                                  {''.join(gap_rows)}
+                                  <div style='color:#64748b;font-size:.72rem;margin-top:.25rem;'>Candidates missing each required skill, out of {len(match_rows)} analysed.</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+
+                        if match_rows:
+                            report_buffer = io.StringIO()
+                            report_writer = csv.DictWriter(
+                                report_buffer,
+                                fieldnames=[
+                                    "Rank", "Candidate", "Hiring Score", "Skill Match %", "Skill Gap %",
+                                    "Matched Skills", "Missing Skills", "Additional Skills",
+                                    "Experience Match", "Location Match", "Recommendations",
+                                ],
+                            )
+                            report_writer.writeheader()
+                            for item in match_rows:
+                                report_writer.writerow({
+                                    "Rank": item["rank"],
+                                    "Candidate": item.get("display_name") or item["candidate_name"],
+                                    "Hiring Score": item["match_score"],
+                                    "Skill Match %": item["skill_match_percentage"],
+                                    "Skill Gap %": item["skill_gap_percentage"],
+                                    "Matched Skills": ", ".join(item["matched_skills"]),
+                                    "Missing Skills": ", ".join(item["missing_skills"]),
+                                    "Additional Skills": ", ".join(item["additional_skills"]),
+                                    "Experience Match": item["experience_match"],
+                                    "Location Match": item["location_match"],
+                                    "Recommendations": " | ".join(
+                                        recommendation["recommendation"]
+                                        for recommendation in item["missing_skill_recommendations"]
+                                    ),
+                                })
+                            st.download_button(
+                                "Download skill-gap report (CSV)",
+                                data=report_buffer.getvalue(),
+                                file_name=f"{selected_job['job_title'].lower().replace(' ', '_')}_skill_gap_report.csv",
+                                mime="text/csv",
+                                use_container_width=True,
+                            )
+
+                        for candidate_match in match_rows:
+                            with st.container(border=True):
+                                score_col, info_col, status_col = st.columns([1, 5, 1])
+                                with score_col:
+                                    score = candidate_match["match_score"]
+                                    st.metric(f"#{candidate_match['rank']}", f"{score}%")
+                                    st.progress(score)
+                                with info_col:
+                                    st.markdown(f"### {html.escape(candidate_match.get('display_name') or candidate_match['candidate_name'])}")
+                                    st.caption(
+                                        f"Hiring score {candidate_match['match_score']}%: "
+                                        f"skills {candidate_match['skill_score_points']}/75, "
+                                        f"experience {candidate_match['experience_score_points']}/20, "
+                                        f"location {candidate_match['location_score_points']}/5"
+                                    )
+                                    st.write("**Matched:** " + (", ".join(candidate_match["matched_skills"]) or "None"))
+                                    st.write("**Missing:** " + (", ".join(candidate_match["missing_skills"]) or "None"))
+                                    with st.expander("View full comparison"):
+                                        st.write("**Additional:** " + (", ".join(candidate_match["additional_skills"]) or "None"))
+                                        st.write("**Relevant certifications:** " + (", ".join(candidate_match["relevant_certifications"]) or "None"))
+                                        st.write("**Education:** " + (", ".join(candidate_match["education"]) or "Not available"))
+                                        if candidate_match["missing_skill_recommendations"]:
+                                            st.markdown("**Recommendations**")
+                                            for recommendation in candidate_match["missing_skill_recommendations"]:
+                                                st.write(f"- {recommendation['skill'].title()}: {recommendation['recommendation']}")
+                                with status_col:
+                                    experience_value = candidate_match.get("experience_match")
+                                    location_value = candidate_match.get("location_match")
+                                    experience_text = "Yes" if experience_value else "No" if experience_value is False else "Not assessed"
+                                    location_text = "Yes" if location_value else "No" if location_value is False else "Not assessed"
+                                    st.caption("Experience")
+                                    st.write(experience_text)
+                                    st.caption(f"Candidate: {candidate_match.get('candidate_experience') or 'Not available'} years")
+                                    st.caption("Location")
+                                    st.write(location_text)
+                                    st.caption(candidate_match.get("candidate_location") or "Candidate location unavailable")
+                                    if st.button("View audit", key=f"audit_{selected_job_id}_{candidate_match['candidate_id']}", use_container_width=True):
+                                        st.session_state.audit_job_id = selected_job_id
+                                        st.session_state.audit_candidate_id = candidate_match["candidate_id"]
+                                        st.session_state.page = "Candidate Skill Audit"
+                                        st.rerun()
+    except requests.RequestException as exc:
+        st.error(f"Could not reach the backend: {exc}")
+
+elif section == "Candidate Skill Audit":
+    audit_job_id = st.session_state.get("audit_job_id")
+    audit_candidate_id = st.session_state.get("audit_candidate_id")
+    if not audit_job_id or not audit_candidate_id:
+        st.session_state.page = "Job Detail"
+        st.rerun()
+
+    if st.button("← Back to candidate matches", key="back_to_candidate_matches"):
+        st.session_state.page = "Job Detail"
+        st.rerun()
+
+    try:
+        audit_job_response = api_call("get", f"/jobs/{audit_job_id}")
+        audit_matches_response = api_call("get", f"/jobs/{audit_job_id}/matches")
+        if not audit_job_response.ok or not audit_matches_response.ok:
+            st.error("The selected job or candidate analysis could not be loaded.")
+        else:
+            audit_job = audit_job_response.json()
+            audit_match_data = audit_matches_response.json()
+            audit_candidate = next(
+                (item for item in audit_match_data.get("matches", []) if item["candidate_id"] == audit_candidate_id),
+                None,
+            )
+            if not audit_candidate:
+                st.error("This candidate is no longer available in the current matching results.")
+            else:
+                candidate_display_name = audit_candidate.get("display_name") or audit_candidate["candidate_name"]
+                st.header(f"{candidate_display_name} — Skill audit")
+                st.caption(f"Evaluated against {audit_job['job_title']} at {audit_job['company_name']}")
+
+                report_buffer = io.StringIO()
+                report_writer = csv.DictWriter(
+                    report_buffer,
+                    fieldnames=["Candidate", "Job", "Hiring Score", "Skill Match %", "Skill Gap %", "Matched Skills", "Missing Skills", "Additional Skills", "Recommendations"],
+                )
+                report_writer.writeheader()
+                report_writer.writerow({
+                    "Candidate": candidate_display_name,
+                    "Job": audit_job["job_title"],
+                    "Hiring Score": audit_candidate["match_score"],
+                    "Skill Match %": audit_candidate["skill_match_percentage"],
+                    "Skill Gap %": audit_candidate["skill_gap_percentage"],
+                    "Matched Skills": ", ".join(audit_candidate["matched_skills"]),
+                    "Missing Skills": ", ".join(audit_candidate["missing_skills"]),
+                    "Additional Skills": ", ".join(audit_candidate["additional_skills"]),
+                    "Recommendations": " | ".join(item["recommendation"] for item in audit_candidate["missing_skill_recommendations"]),
+                })
+                st.download_button(
+                    "Download audit report (CSV)",
+                    data=report_buffer.getvalue(),
+                    file_name=f"{candidate_display_name.lower().replace(' ', '_')}_skill_audit.csv",
+                    mime="text/csv",
+                )
+
+                with st.container(border=True):
+                    hiring_score = audit_candidate["match_score"]
+                    st.markdown(
+                        f"""
+                        <div style="padding:1.1rem 1.25rem 0.8rem 1.25rem;">
+                            <div style="display:flex; justify-content:space-between; align-items:end; gap:1rem;">
+                                <div style="color:#1e3a8a !important; font-size:0.85rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase;">Overall hiring score</div>
+                                <div style="color:#2563eb !important; font-size:3.2rem; font-weight:700; line-height:1;">{hiring_score}<span style="color:#2563eb !important; font-size:1.25rem;">%</span></div>
+                            </div>
+                            <div style="position:relative; height:1.1rem; margin-top:3rem; background:#dbeafe; border-radius:999px; overflow:visible;">
+                                <div style="height:100%; width:{hiring_score}%; background:linear-gradient(90deg,#1d4ed8,#3b82f6); border-radius:999px;"></div>
+                                <div style="position:absolute; left:60%; top:-0.45rem; height:2rem; width:2px; background:#1e3a8a;"></div>
+                                <div style="position:absolute; left:60%; top:-1.9rem; transform:translateX(-50%); white-space:nowrap; color:#1e3a8a !important; font-size:0.8rem; font-weight:600;">Shortlist line · 60%</div>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; margin-top:0.55rem; color:#64748b !important; font-size:0.8rem; font-weight:600;">
+                                <span style="color:#64748b !important;">0</span><span style="color:#64748b !important;">25</span><span style="color:#64748b !important;">50</span><span style="color:#64748b !important;">75</span><span style="color:#64748b !important;">100</span>
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    st.divider()
+                    st.markdown("#### Score composition")
+                    st.write(
+                        f"Skills: **{audit_candidate['skill_score_points']}/75**  |  "
+                        f"Experience: **{audit_candidate['experience_score_points']}/20**  |  "
+                        f"Location: **{audit_candidate['location_score_points']}/5**"
+                    )
+                    st.caption("Location remains a low-priority factor; skills and experience determine most of the hiring score.")
+
+                required_count = len(audit_match_data.get("required_skills", []))
+                metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+                with metric_col1:
+                    st.metric("Required skills", required_count)
+                with metric_col2:
+                    st.metric("Matched", len(audit_candidate["matched_skills"]))
+                with metric_col3:
+                    st.metric("Missing", len(audit_candidate["missing_skills"]))
+                with metric_col4:
+                    st.metric("Additional", len(audit_candidate["additional_skills"]))
+
+                st.markdown("### Missing skills")
+                if audit_candidate["missing_skill_recommendations"]:
+                    for recommendation in audit_candidate["missing_skill_recommendations"]:
+                        with st.container(border=True):
+                            st.markdown(f"<span style='color:#2563eb !important; font-weight:700;'>{html.escape(recommendation['skill'].title())}</span>", unsafe_allow_html=True)
+                            st.write(recommendation["recommendation"])
+                else:
+                    st.success("No required skills are missing for this job.")
+
+                def audit_skill_tags(skills: list[str], background: str, border: str) -> str:
+                    if not skills:
+                        return "<span style='color:#64748b !important;'>None</span>"
+                    return " ".join(
+                        f"<span style='display:inline-block; margin:0.2rem 0.25rem 0.2rem 0; padding:0.3rem 0.6rem; border-radius:999px; background:{background}; border:1px solid {border}; color:#1e3a8a !important; font-size:0.85rem;'>{html.escape(skill)}</span>"
+                        for skill in skills
+                    )
+
+                st.markdown("### Matched skills")
+                st.markdown(audit_skill_tags(audit_candidate["matched_skills"], "#dbeafe", "#93c5fd"), unsafe_allow_html=True)
+                st.markdown("### Additional skills")
+                st.markdown(audit_skill_tags(audit_candidate["additional_skills"], "#eff6ff", "#bfdbfe"), unsafe_allow_html=True)
+
+                st.markdown("### Candidate context")
+                experience_value = audit_candidate.get("experience_match")
+                location_value = audit_candidate.get("location_match")
+                experience_text = "Meets requirement" if experience_value else "Below requirement" if experience_value is False else "Not assessed"
+                location_text = "Matches job location" if location_value else "Different location" if location_value is False else "Not assessed"
+                st.write(
+                    f"Experience: **{audit_candidate.get('candidate_experience') or 'Not available'} years** — {experience_text}  |  "
+                    f"Location: **{audit_candidate.get('candidate_location') or 'Not available'}** — {location_text}"
+                )
+    except requests.RequestException as exc:
+        st.error(f"Could not reach the backend: {exc}")
+
 elif section == "Analytics":
     st.header("Analytics")
-    st.markdown("<p class='section-subtitle'>Insight into recruiter activity and candidate trends.</p>", unsafe_allow_html=True)
+    st.markdown("<p class='section-subtitle'>Hiring outcomes, candidate readiness, and skill gaps across your open roles.</p>", unsafe_allow_html=True)
+
+    try:
+        jobs_response = api_call("get", "/jobs")
+        jobs_for_analytics = jobs_response.json() if jobs_response.ok else []
+    except requests.RequestException:
+        jobs_for_analytics = []
+
+    if not jobs_for_analytics:
+        st.info("Create a job posting with required skills to see hiring analytics.")
+    else:
+        job_labels = {
+            job["job_id"]: f"{job['job_title']} — {job['company_name']}"
+            for job in jobs_for_analytics
+        }
+        selected_analytics_job = st.selectbox(
+            "Analyse job",
+            options=["All job postings", *job_labels.values()],
+            key="analytics_job_filter",
+        )
+        selected_analytics_job_id = next(
+            (job_id for job_id, label in job_labels.items() if label == selected_analytics_job),
+            None,
+        )
+
+        job_summary_rows: list[dict[str, Any]] = []
+        all_match_rows: list[dict[str, Any]] = []
+        all_gap_rows: list[dict[str, Any]] = []
+        for job in jobs_for_analytics:
+            if selected_analytics_job_id and job["job_id"] != selected_analytics_job_id:
+                continue
+            try:
+                match_response = api_call("get", f"/jobs/{job['job_id']}/matches")
+            except requests.RequestException:
+                continue
+            if not match_response.ok:
+                continue
+            match_data = match_response.json()
+            summary = match_data.get("summary", {})
+            job_label = job_labels[job["job_id"]]
+            job_summary_rows.append({
+                "Job": job_label,
+                "Average hiring score": summary.get("average_score", 0),
+                "Best hiring score": summary.get("top_score", 0),
+            })
+            for candidate_match in match_data.get("matches", []):
+                all_match_rows.append({
+                    "Job": job_label,
+                    "Candidate": candidate_match.get("display_name") or candidate_match["candidate_name"],
+                    "Hiring score": candidate_match["match_score"],
+                    "Score band": (
+                        "Excellent (80-100)" if candidate_match["match_score"] >= 80 else
+                        "Strong (60-79)" if candidate_match["match_score"] >= 60 else
+                        "Potential (40-59)" if candidate_match["match_score"] >= 40 else
+                        "Limited (0-39)"
+                    ),
+                })
+            for gap in match_data.get("skill_gap_summary", []):
+                all_gap_rows.append({
+                    "Skill": gap["skill"],
+                    "Candidates missing": gap["candidates_missing"],
+                })
+
+        if not all_match_rows:
+            st.info("Add required skills to a job and upload candidates to generate analytics.")
+        else:
+            # Compact recruiter dashboard layout: summary cards, then clear
+            # progress-based job, readiness-tier, and skill-gap sections.
+            average_hiring_score = round(sum(row["Hiring score"] for row in all_match_rows) / len(all_match_rows))
+            top_match = max(all_match_rows, key=lambda row: row["Hiring score"])
+            strong_matches = [row for row in all_match_rows if 60 <= row["Hiring score"] < 80]
+            potential_matches = [row for row in all_match_rows if 40 <= row["Hiring score"] < 60]
+            limited_matches = [row for row in all_match_rows if row["Hiring score"] < 40]
+            excellent_matches = [row for row in all_match_rows if row["Hiring score"] >= 80]
+
+            st.markdown(
+                f"""
+                <div style='display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin:0.4rem 0 1.8rem 0;'>
+                    <div style='padding:0.6rem 1rem 0.6rem 0;'><div style='color:#2563eb !important; font-size:0.68rem; letter-spacing:0.1em; font-weight:700;'>CANDIDATES</div><div style='color:#0f172a !important; font-size:1.6rem; font-weight:700; margin-top:0.35rem;'>{len(candidates)}</div><div style='color:#64748b !important; font-size:0.72rem;'>across analysed postings</div></div>
+                    <div style='padding:0.6rem 1rem;'><div style='color:#2563eb !important; font-size:0.68rem; letter-spacing:0.1em; font-weight:700;'>JOBS ANALYSED</div><div style='color:#0f172a !important; font-size:1.6rem; font-weight:700; margin-top:0.35rem;'>{len(job_summary_rows)}</div><div style='color:#64748b !important; font-size:0.72rem;'>selected scope</div></div>
+                    <div style='padding:0.6rem 1rem;'><div style='color:#2563eb !important; font-size:0.68rem; letter-spacing:0.1em; font-weight:700;'>AVERAGE HIRING SCORE</div><div style='color:#0f172a !important; font-size:1.6rem; font-weight:700; margin-top:0.35rem;'>{average_hiring_score}%</div><div style='color:#64748b !important; font-size:0.72rem;'>across candidate matches</div></div>
+                    <div style='padding:1rem;'><div style='color:#2563eb !important; font-size:0.68rem; letter-spacing:0.1em; font-weight:700;'>TOP CANDIDATE</div><div style='color:#0f172a !important; font-size:1.6rem; font-weight:700; margin-top:0.35rem;'>{top_match['Hiring score']}%</div><div style='color:#64748b !important; font-size:0.72rem;'>{html.escape(top_match['Candidate'])}</div></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("### Hiring score by job")
+            for job_row in job_summary_rows:
+                matching_for_job = [row for row in all_match_rows if row["Job"] == job_row["Job"]]
+                job_top = max(matching_for_job, key=lambda row: row["Hiring score"]) if matching_for_job else None
+                average_score = job_row["Average hiring score"]
+                # The job bar represents the best available candidate, while the
+                # note keeps the overall average visible for context.
+                score = job_top["Hiring score"] if job_top else average_score
+                job_note = (
+                    f"{len(matching_for_job)} candidates  |  Average: {average_score}%  |  "
+                    f"Top match: {html.escape(job_top['Candidate'])} ({job_top['Hiring score']}%)"
+                    if job_top
+                    else "No candidate matches yet."
+                )
+                st.markdown(
+                    f"""
+                    <div style='padding:0.45rem 0 1rem; margin-bottom:0.55rem;'>
+                        <div style='display:flex; justify-content:space-between; gap:1rem;'><span style='color:#0f172a !important; font-weight:700;'>{html.escape(job_row['Job'])}</span><span style='color:#2563eb !important; font-size:1.1rem; font-weight:700;'>{score}%</span></div>
+                        <div style='height:0.55rem; margin-top:0.75rem; background:#e2e8f0; border-radius:999px; overflow:hidden;'><div style='height:100%; width:{score}%; background:linear-gradient(90deg,#2563eb,#60a5fa); border-radius:999px;'></div></div>
+                        <div style='margin-top:0.55rem; color:#64748b !important; font-size:0.78rem;'>{job_note}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown("### Candidates by relevance tier")
+            tier_col1, tier_col2, tier_col3 = st.columns(3, gap="small")
+            tiers = [
+                (tier_col1, "Strong", strong_matches + excellent_matches, "#2563eb", "#eff6ff"),
+                (tier_col2, "Potential", potential_matches, "#d97706", "#fff7ed"),
+                (tier_col3, "Limited", limited_matches, "#64748b", "#f1f5f9"),
+            ]
+            for tier_column, tier_name, tier_matches, color, badge_background in tiers:
+                with tier_column:
+                    candidate_rows = "".join(
+                        f"<div style='margin-top:0.55rem; color:#0f172a !important; font-size:0.9rem;'>{html.escape(tier_match['Candidate'])} <span style='color:#2563eb !important; font-weight:700;'>— {tier_match['Hiring score']}%</span></div>"
+                        for tier_match in tier_matches[:3]
+                    ) or "<div style='margin-top:0.7rem; color:#64748b !important; font-size:0.85rem;'>No candidates in this tier</div>"
+                    st.markdown(
+                        f"""
+                        <div style='min-height:8.2rem; padding:0.4rem 0.15rem;'>
+                            <span style='display:inline-block; padding:0.22rem 0.58rem; border-radius:4px; background:{badge_background}; color:{color} !important; font-size:0.78rem; font-weight:700; text-transform:lowercase;'>• {tier_name}</span>
+                            <div style='margin-top:0.7rem; color:#0f172a !important; font-size:1.55rem; font-weight:700;'>{len(tier_matches)}</div>
+                            {candidate_rows}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+            aggregated_gap_counts: dict[str, int] = {}
+            for gap in all_gap_rows:
+                aggregated_gap_counts[gap["Skill"]] = aggregated_gap_counts.get(gap["Skill"], 0) + gap["Candidates missing"]
+            if aggregated_gap_counts:
+                st.markdown("### Most common skill gaps")
+                for skill, missing_count in sorted(aggregated_gap_counts.items(), key=lambda item: item[1], reverse=True):
+                    gap_percent = round((missing_count / len(all_match_rows)) * 100)
+                    st.markdown(
+                        f"""
+                        <div style='padding:0.45rem 0 1rem; margin-bottom:0.45rem;'>
+                            <div style='display:flex; justify-content:space-between; gap:1rem;'><span style='color:#0f172a !important; font-weight:700;'>{html.escape(skill.title())}</span><span style='color:#2563eb !important; font-size:0.82rem; font-weight:700;'>{missing_count} gap{'s' if missing_count != 1 else ''}</span></div>
+                            <div style='height:0.55rem; margin-top:0.75rem; background:#e2e8f0; border-radius:999px; overflow:hidden;'><div style='height:100%; width:{gap_percent}%; background:linear-gradient(90deg,#2563eb,#60a5fa); border-radius:999px;'></div></div>
+                            <div style='margin-top:0.55rem; color:#64748b !important; font-size:0.78rem;'>{missing_count} of {len(all_match_rows)} candidate matches are missing this skill ({gap_percent}%).</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+            st.stop()
+
+            average_hiring_score = round(sum(row["Hiring score"] for row in all_match_rows) / len(all_match_rows))
+            top_match = max(all_match_rows, key=lambda row: row["Hiring score"])
+            metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+            with metric_col1:
+                st.metric("Candidates", len(candidates))
+            with metric_col2:
+                st.metric("Jobs analysed", len(job_summary_rows))
+            with metric_col3:
+                st.metric("Average hiring score", f"{average_hiring_score}%")
+            with metric_col4:
+                st.metric("Top candidate", f"{top_match['Hiring score']}%", top_match["Candidate"])
+
+            job_chart_col, distribution_chart_col = st.columns(2, gap="large")
+            with job_chart_col:
+                summary_df = pd.DataFrame(job_summary_rows)
+                job_chart = (
+                    alt.Chart(summary_df)
+                    .mark_bar(color="#2563eb", cornerRadiusEnd=6)
+                    .encode(
+                        x=alt.X("Average hiring score:Q", scale=alt.Scale(domain=[0, 100]), title="Average hiring score (%)"),
+                        y=alt.Y("Job:N", sort="-x", title=None, axis=alt.Axis(labelLimit=220)),
+                        tooltip=["Job:N", "Average hiring score:Q", "Best hiring score:Q"],
+                    )
+                    .properties(height=max(180, len(summary_df) * 46), title="Hiring score by job")
+                    .configure(background="#ffffff")
+                    .configure_view(fill="#ffffff", stroke="#e2e8f0")
+                    .configure_axis(labelColor="#0f172a", titleColor="#0f172a", gridColor="#e2e8f0")
+                    .configure_title(color="#0f172a", fontSize=16)
+                )
+                st.altair_chart(job_chart, use_container_width=True)
+
+            with distribution_chart_col:
+                distribution_df = pd.DataFrame(all_match_rows)
+                distribution_chart = (
+                    alt.Chart(distribution_df)
+                    .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                    .encode(
+                        x=alt.X("Score band:N", sort=["Excellent (80-100)", "Strong (60-79)", "Potential (40-59)", "Limited (0-39)"], title=None),
+                        y=alt.Y("count():Q", title="Candidate matches"),
+                        color=alt.Color(
+                            "Score band:N",
+                            scale=alt.Scale(
+                                domain=["Excellent (80-100)", "Strong (60-79)", "Potential (40-59)", "Limited (0-39)"],
+                                range=["#16a34a", "#2563eb", "#f59e0b", "#94a3b8"],
+                            ),
+                            legend=None,
+                        ),
+                        tooltip=["Score band:N", alt.Tooltip("count():Q", title="Candidates")],
+                    )
+                    .properties(height=220, title="Candidate readiness distribution")
+                    .configure(background="#ffffff")
+                    .configure_view(fill="#ffffff", stroke="#e2e8f0")
+                    .configure_axis(labelColor="#0f172a", titleColor="#0f172a", gridColor="#e2e8f0")
+                    .configure_title(color="#0f172a", fontSize=16)
+                )
+                st.altair_chart(distribution_chart, use_container_width=True)
+
+            aggregated_gaps = pd.DataFrame(all_gap_rows).groupby("Skill", as_index=False)["Candidates missing"].sum() if all_gap_rows else pd.DataFrame()
+            if not aggregated_gaps.empty:
+                gap_chart = (
+                    alt.Chart(aggregated_gaps)
+                    .mark_bar(color="#f59e0b", cornerRadiusEnd=6)
+                    .encode(
+                        x=alt.X("Candidates missing:Q", title="Candidates with this gap"),
+                        y=alt.Y("Skill:N", sort="-x", title=None),
+                        tooltip=["Skill:N", "Candidates missing:Q"],
+                    )
+                    .properties(height=max(160, len(aggregated_gaps) * 38), title="Most common skill gaps")
+                    .configure(background="#ffffff")
+                    .configure_view(fill="#ffffff", stroke="#e2e8f0")
+                    .configure_axis(labelColor="#0f172a", titleColor="#0f172a", gridColor="#e2e8f0")
+                    .configure_title(color="#0f172a", fontSize=16)
+                )
+                st.altair_chart(gap_chart, use_container_width=True)
 
 elif section == "Settings":
     st.header("Settings")

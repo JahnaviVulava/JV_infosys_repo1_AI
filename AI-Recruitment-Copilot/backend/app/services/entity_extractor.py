@@ -21,6 +21,7 @@ class EntityExtractor:
         name = self._extract_name(cleaned_text)
         email = self._extract_email(cleaned_text)
         phone = self._extract_phone(cleaned_text)
+        address = self._extract_location(cleaned_text)
         linkedin = self._extract_link(cleaned_text, "linkedin.com")
         github = self._extract_link(cleaned_text, "github.com")
         portfolio = self._extract_portfolio(cleaned_text)
@@ -34,6 +35,7 @@ class EntityExtractor:
             "name": name,
             "email": email,
             "phone": phone,
+            "address": address,
             "linkedin": linkedin,
             "github": github,
             "portfolio": portfolio,
@@ -75,6 +77,22 @@ class EntityExtractor:
             segment = all_digits[i:i + 10]
             if len(segment) == 10:
                 return segment
+        return None
+
+    def _extract_location(self, text: str) -> str | None:
+        """Extract a candidate city from common resume headers and labels."""
+        cities = (
+            "Ahmedabad", "Bengaluru", "Bangalore", "Bhopal", "Chennai", "Coimbatore",
+            "Delhi", "Gurgaon", "Gurugram", "Hyderabad", "Indore", "Jaipur", "Kochi",
+            "Kolkata", "Lucknow", "Mumbai", "Mysuru", "Nagpur", "Noida", "Pune",
+            "Thiruvananthapuram", "Visakhapatnam",
+        )
+        header = "\n".join(text.splitlines()[:12])
+        labelled = re.search(r"(?:location|address|city|based\s+in)\s*[:\-]?\s*([A-Za-z ]{3,80})", header, re.IGNORECASE)
+        search_text = labelled.group(1) if labelled else header
+        for city in cities:
+            if re.search(rf"\b{re.escape(city)}\b", search_text, re.IGNORECASE):
+                return city
         return None
 
     def _extract_link(self, text: str, domain: str) -> str | None:
@@ -271,9 +289,12 @@ class EntityExtractor:
         return found
 
     def _extract_experience(self, text: str) -> str | None:
-        matches = re.findall(r"(\d+)(?:\s+years?|\s+yr)", text, re.IGNORECASE)
-        if matches:
-            return matches[0]
+        year_matches = re.findall(r"(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\b", text, re.IGNORECASE)
+        if year_matches:
+            return str(max(float(value) for value in year_matches)).rstrip("0").rstrip(".")
+        month_matches = re.findall(r"(\d+)\s*\+?\s*months?\b", text, re.IGNORECASE)
+        if month_matches:
+            return str(round(max(int(value) for value in month_matches) / 12, 1))
         return "0"
 
     def _extract_projects(self, text: str) -> list[dict[str, str]]:
@@ -288,7 +309,8 @@ class EntityExtractor:
         certs = []
         for line in text.splitlines():
             if re.search(r"certification|certified|aws|azure|oracle|ccna", line, re.IGNORECASE):
-                certs.append({"certificate_name": line[:100]})
+                clean_line = re.sub(r"\s*\(cid:\d+\)", "", line, flags=re.IGNORECASE).strip()
+                certs.append({"certificate_name": clean_line[:100]})
         return certs[:5]
 
     def _extract_languages(self, text: str) -> list[str]:

@@ -7,6 +7,7 @@ class JobCreate(BaseModel):
     job_title: str = Field(..., min_length=2, max_length=255)
     company_name: str = Field(..., min_length=2, max_length=255)
     description: str | None = None
+    required_skills: str | None = None
     experience: str | None = None
     location: str | None = None
     salary: str | None = None
@@ -16,6 +17,7 @@ class JobUpdate(BaseModel):
     job_title: str | None = Field(None, min_length=2, max_length=255)
     company_name: str | None = Field(None, min_length=2, max_length=255)
     description: str | None = None
+    required_skills: str | None = None
     experience: str | None = None
     location: str | None = None
     salary: str | None = None
@@ -26,6 +28,7 @@ class JobRead(BaseModel):
     job_title: str
     company_name: str
     description: str | None = None
+    required_skills: str | None = None
     experience: str | None = None
     location: str | None = None
     salary: str | None = None
