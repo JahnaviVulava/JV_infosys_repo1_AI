@@ -12,6 +12,7 @@ class Job(Base):
     company_name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     required_skills = Column(Text, nullable=True)
+    required_education = Column(String(255), nullable=True)
     experience = Column(String(50), nullable=True)
     location = Column(String(255), nullable=True)
     salary = Column(String(50), nullable=True)

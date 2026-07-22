@@ -10,7 +10,7 @@ from backend.app.core.config import get_settings
 from backend.app.core.database import get_db
 from backend.app.models.candidate import Candidate
 from backend.app.models.job import Job
-from backend.app.schemas.job import JobCreate, JobRead, JobUpdate
+from backend.app.schemas.job import JobCreate, JobRead, JobReplace, JobUpdate
 from backend.app.services.entity_extractor import EntityExtractor
 from backend.app.services.resume_parser import ResumeParser
 
@@ -38,6 +38,27 @@ SKILL_RECOMMENDATIONS = {
     "machine learning": "Train, evaluate, and document an end-to-end machine-learning project.",
 }
 
+# A higher level meets a lower-level requirement: for example, MTech meets a
+# BTech requirement. Unknown qualifications fall back to a text comparison.
+EDUCATION_LEVELS = {
+    "phd": 4,
+    "doctorate": 4,
+    "mtech": 3,
+    "m.tech": 3,
+    "master": 3,
+    "msc": 3,
+    "m.sc": 3,
+    "mba": 3,
+    "btech": 2,
+    "b.tech": 2,
+    "bachelor": 2,
+    "b.e": 2,
+    "be ": 2,
+    "bsc": 2,
+    "b.sc": 2,
+    "diploma": 1,
+}
+
 
 def normalise_skill(skill: str) -> str:
     return re.sub(r"\s+", " ", skill.strip().lower())
@@ -48,6 +69,38 @@ def recommendation_for_skill(skill: str) -> str:
         skill,
         f"Complete a focused course and build a small demonstrable project using {skill}.",
     )
+
+
+def education_level(value: str | None) -> int | None:
+    text = normalise_skill(value or "")
+    for qualification, level in EDUCATION_LEVELS.items():
+        if qualification in text:
+            return level
+    return None
+
+
+def education_matches(candidate_degrees: list[str], required_education: str | None) -> bool | None:
+    """Return whether a candidate meets the specified minimum qualification."""
+    if not required_education:
+        # Education remains part of every hiring score. With no job-specific
+        # qualification entered, a recorded qualification is treated as verified.
+        return bool(candidate_degrees)
+    required_level = education_level(required_education)
+    candidate_levels = [education_level(degree) for degree in candidate_degrees]
+    known_levels = [level for level in candidate_levels if level is not None]
+    if required_level is not None and known_levels:
+        return max(known_levels) >= required_level
+    required_text = normalise_skill(required_education)
+    return any(required_text in normalise_skill(degree) for degree in candidate_degrees)
+
+
+def recommendation_for_education(required_education: str, candidate_degrees: list[str]) -> str:
+    if candidate_degrees:
+        return (
+            f"The role requests {required_education}; the candidate's recorded education is "
+            f"{', '.join(candidate_degrees)}. Verify equivalency or request the required qualification."
+        )
+    return f"The role requests {required_education}; request qualification details from the candidate."
 
 
 def skills_required_by_job(job: Job, candidates: list[Candidate]) -> list[str]:
@@ -191,6 +244,8 @@ def match_candidates_to_job(job_id: str, db: Session = Depends(get_db)) -> dict[
         skill_score = round((len(matched_skills) / len(required_skills)) * 100) if required_skills else 0
         experience_match = experience_matches(candidate_experience, job.experience)
         location_match = locations_match(candidate_location, job.location)
+        candidate_education = [education.degree for education in candidate.educations if education.degree]
+        education_match = education_matches(candidate_education, job.required_education)
         relevant_certifications = [
             re.sub(r"\s*\(cid:\d+\)", "", cert.certificate_name, flags=re.IGNORECASE).strip()
             for cert in candidate.certifications
@@ -199,17 +254,26 @@ def match_candidates_to_job(job_id: str, db: Session = Depends(get_db)) -> dict[
                 for skill in required_skill_set
             )
         ]
-        skill_score_points = round(skill_score * 0.75, 1)
-        experience_score_points = 20 if experience_match else 0
+        # Education is part of every hiring score. If a recruiter specifies a
+        # qualification, the same 15 points are based on that exact requirement.
+        # Location deliberately remains the least important factor.
+        skill_weight, experience_weight, education_weight = 65, 15, 15
+        skill_score_points = round(skill_score * (skill_weight / 100), 1)
+        experience_score_points = experience_weight if experience_match else 0
+        education_score_points = education_weight if education_match else 0
         location_score_points = 5 if location_match else 0
-        # Skills carry 75% of the score, experience 20%, and location only 5%.
-        score = round(skill_score_points + experience_score_points + location_score_points)
+        score = round(
+            skill_score_points
+            + experience_score_points
+            + education_score_points
+            + location_score_points
+        )
 
         results.append({
             "candidate_id": candidate.candidate_id,
             "candidate_name": candidate.name,
             "candidate_experience": candidate_experience,
-            "education": [education.degree for education in candidate.educations if education.degree],
+            "education": candidate_education,
             "certifications": [
                 re.sub(r"\s*\(cid:\d+\)", "", cert.certificate_name, flags=re.IGNORECASE).strip()
                 for cert in candidate.certifications
@@ -224,12 +288,20 @@ def match_candidates_to_job(job_id: str, db: Session = Depends(get_db)) -> dict[
             "skill_gap_percentage": 100 - skill_score,
             "skill_score_points": skill_score_points,
             "experience_score_points": experience_score_points,
+            "education_score_points": education_score_points,
             "location_score_points": location_score_points,
             "missing_skill_recommendations": [
                 {"skill": skill, "recommendation": recommendation_for_skill(skill)}
                 for skill in missing_skills
             ],
             "experience_match": experience_match,
+            "education_match": education_match,
+            "required_education": job.required_education,
+            "education_recommendation": (
+                recommendation_for_education(job.required_education, candidate_education)
+                if job.required_education and education_match is False
+                else None
+            ),
             "experience_surplus": experience_surplus(candidate_experience, job.experience),
             "candidate_location": candidate_location,
             "job_location": job.location,
@@ -276,6 +348,13 @@ def match_candidates_to_job(job_id: str, db: Session = Depends(get_db)) -> dict[
         "job_id": job.job_id,
         "job_title": job.job_title,
         "required_skills": required_skills,
+        "required_education": job.required_education,
+        "score_weights": {
+            "skills": 65,
+            "experience": 15,
+            "education": 15,
+            "location": 5,
+        },
         "summary": {
             "candidate_count": len(results),
             "top_score": results[0]["match_score"] if results else 0,
@@ -299,6 +378,26 @@ def get_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    return job
+
+
+@router.put("/{job_id}/replace", response_model=JobRead)
+def replace_job(
+    job_id: str,
+    job_data: JobReplace,
+    db: Session = Depends(get_db),
+) -> Job:
+    """Replace a job only when a complete new posting is supplied."""
+    job = db.query(Job).filter(Job.job_id == job_id).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    for field, value in job_data.model_dump().items():
+        setattr(job, field, value)
+
+    db.commit()
+    db.refresh(job)
     return job
 
 

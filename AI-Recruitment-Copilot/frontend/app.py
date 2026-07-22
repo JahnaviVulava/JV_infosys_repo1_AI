@@ -1868,6 +1868,11 @@ elif section == "Job Postings":
             placeholder="e.g. Python, FastAPI, SQL, Docker",
             help="Enter skills separated by commas. These are used for candidate matching.",
         )
+        required_education = st.text_input(
+            "Required education",
+            placeholder="e.g. BTech in Computer Science",
+            help="An equal or higher qualification counts as a match (for example, MTech meets BTech).",
+        )
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1888,6 +1893,7 @@ elif section == "Job Postings":
                 "company_name": company_name.strip(),
                 "description": description.strip() or None,
                 "required_skills": required_skills.strip() or None,
+                "required_education": required_education.strip() or None,
                 "experience": experience.strip() or None,
                 "location": location.strip() or None,
                 "salary": salary.strip() or None,
@@ -1917,6 +1923,8 @@ elif section == "Job Postings":
             else:
                 if "editing_job_id" not in st.session_state:
                     st.session_state.editing_job_id = None
+                if "job_form_mode" not in st.session_state:
+                    st.session_state.job_form_mode = None
                 if "delete_job_id" not in st.session_state:
                     st.session_state.delete_job_id = None
                 if "matching_job_id" not in st.session_state:
@@ -1924,12 +1932,13 @@ elif section == "Job Postings":
 
                 for job in jobs:
                     with st.container(border=True):
-                        job_info_col, match_col, edit_col, delete_col = st.columns([7, 1, 1, 1])
+                        job_info_col, match_col, edit_col, replace_col, delete_col = st.columns([6, 1, 1, 1, 1])
                         with job_info_col:
                             st.markdown(f"### {html.escape(job['job_title'])}")
                             st.markdown(f"**{html.escape(job['company_name'])}**")
                             st.write(job.get("description") or "No description provided.")
                             st.caption("Required skills: " + (job.get("required_skills") or "Not specified"))
+                            st.caption("Required education: " + (job.get("required_education") or "Not specified"))
                             st.caption(
                                 f"Experience: {job.get('experience') or '-'}  |  "
                                 f"Location: {job.get('location') or '-'}  |  "
@@ -1943,6 +1952,12 @@ elif section == "Job Postings":
                         with edit_col:
                             if st.button("Edit", key=f"edit_job_{job['job_id']}", use_container_width=True):
                                 st.session_state.editing_job_id = job["job_id"]
+                                st.session_state.job_form_mode = "edit"
+                                st.rerun()
+                        with replace_col:
+                            if st.button("Replace", key=f"replace_job_{job['job_id']}", use_container_width=True):
+                                st.session_state.editing_job_id = job["job_id"]
+                                st.session_state.job_form_mode = "replace"
                                 st.rerun()
                         with delete_col:
                             if st.button("Delete", key=f"delete_job_{job['job_id']}", use_container_width=True):
@@ -2012,47 +2027,63 @@ elif section == "Job Postings":
                             st.error(f"Could not reach the backend: {exc}")
 
                     if st.session_state.editing_job_id == job["job_id"]:
-                        st.subheader(f"Edit {job['job_title']}")
-                        with st.form(f"edit_job_form_{job['job_id']}"):
-                            edit_title = st.text_input("Job title *", value=job["job_title"], key=f"edit_title_{job['job_id']}")
-                            edit_company = st.text_input("Company name *", value=job["company_name"], key=f"edit_company_{job['job_id']}")
+                        is_replacing = st.session_state.job_form_mode == "replace"
+                        form_mode = "replace" if is_replacing else "edit"
+                        st.subheader(f"{'Replace' if is_replacing else 'Edit'} {job['job_title']}")
+                        with st.form(f"{form_mode}_job_form_{job['job_id']}"):
+                            edit_title = st.text_input("Job title *", value="" if is_replacing else job["job_title"], key=f"{form_mode}_title_{job['job_id']}")
+                            edit_company = st.text_input("Company name *", value="" if is_replacing else job["company_name"], key=f"{form_mode}_company_{job['job_id']}")
                             edit_description = st.text_area(
-                                "Job description",
-                                value=job.get("description") or "",
-                                key=f"edit_description_{job['job_id']}",
+                                "Job description *" if is_replacing else "Job description",
+                                value="" if is_replacing else job.get("description") or "",
+                                key=f"{form_mode}_description_{job['job_id']}",
                             )
                             edit_required_skills = st.text_input(
-                                "Required skills",
-                                value=job.get("required_skills") or "",
-                                key=f"edit_required_skills_{job['job_id']}",
+                                "Required skills *" if is_replacing else "Required skills",
+                                value="" if is_replacing else job.get("required_skills") or "",
+                                key=f"{form_mode}_required_skills_{job['job_id']}",
+                            )
+                            edit_required_education = st.text_input(
+                                "Required education *" if is_replacing else "Required education",
+                                value="" if is_replacing else job.get("required_education") or "",
+                                key=f"{form_mode}_required_education_{job['job_id']}",
+                                help="An equal or higher qualification counts as a match.",
                             )
                             edit_col1, edit_col2, edit_col3 = st.columns(3)
                             with edit_col1:
-                                edit_experience = st.text_input("Experience", value=job.get("experience") or "", key=f"edit_experience_{job['job_id']}")
+                                edit_experience = st.text_input("Experience *" if is_replacing else "Experience", value="" if is_replacing else job.get("experience") or "", key=f"{form_mode}_experience_{job['job_id']}")
                             with edit_col2:
-                                edit_location = st.text_input("Location", value=job.get("location") or "", key=f"edit_location_{job['job_id']}")
+                                edit_location = st.text_input("Location *" if is_replacing else "Location", value="" if is_replacing else job.get("location") or "", key=f"{form_mode}_location_{job['job_id']}")
                             with edit_col3:
-                                edit_salary = st.text_input("Salary", value=job.get("salary") or "", key=f"edit_salary_{job['job_id']}")
-                            save_changes = st.form_submit_button("Save changes", use_container_width=True)
+                                edit_salary = st.text_input("Salary *" if is_replacing else "Salary", value="" if is_replacing else job.get("salary") or "", key=f"{form_mode}_salary_{job['job_id']}")
+                            save_changes = st.form_submit_button("Replace job posting" if is_replacing else "Save changes", use_container_width=True)
 
                         if save_changes:
-                            if not edit_title.strip() or not edit_company.strip():
+                            replacement_values = [edit_title, edit_company, edit_description, edit_required_skills, edit_required_education, edit_experience, edit_location, edit_salary]
+                            if is_replacing and any(not value.strip() for value in replacement_values):
+                                st.error("Fill every field before replacing this job posting.")
+                            elif not edit_title.strip() or not edit_company.strip():
                                 st.error("Job title and company name are required.")
                             else:
                                 update_payload = {
                                     "job_title": edit_title.strip(),
                                     "company_name": edit_company.strip(),
-                                    "description": edit_description.strip() or None,
-                                    "required_skills": edit_required_skills.strip() or None,
-                                    "experience": edit_experience.strip() or None,
-                                    "location": edit_location.strip() or None,
-                                    "salary": edit_salary.strip() or None,
+                                    "description": edit_description.strip() if is_replacing else edit_description.strip() or None,
+                                    "required_skills": edit_required_skills.strip() if is_replacing else edit_required_skills.strip() or None,
+                                    "required_education": edit_required_education.strip() if is_replacing else edit_required_education.strip() or None,
+                                    "experience": edit_experience.strip() if is_replacing else edit_experience.strip() or None,
+                                    "location": edit_location.strip() if is_replacing else edit_location.strip() or None,
+                                    "salary": edit_salary.strip() if is_replacing else edit_salary.strip() or None,
                                 }
+                                if not is_replacing:
+                                    update_payload = {field: value for field, value in update_payload.items() if value != job.get(field)}
                                 try:
-                                    update_response = api_call("put", f"/jobs/{job['job_id']}", payload=update_payload)
+                                    endpoint = f"/jobs/{job['job_id']}/replace" if is_replacing else f"/jobs/{job['job_id']}"
+                                    update_response = api_call("put", endpoint, payload=update_payload)
                                     if update_response.ok:
                                         st.session_state.editing_job_id = None
-                                        st.success("Job posting updated successfully.")
+                                        st.session_state.job_form_mode = None
+                                        st.success("Job posting replaced successfully." if is_replacing else "Job posting updated successfully.")
                                         st.rerun()
                                     else:
                                         st.error(f"Could not update job: {update_response.text}")
@@ -2092,6 +2123,8 @@ elif section == "Job Detail":
             st.write(selected_job.get("description") or "No description provided.")
             st.markdown("#### Required skills")
             st.write(selected_job.get("required_skills") or "Not specified")
+            st.markdown("#### Required education")
+            st.write(selected_job.get("required_education") or "Not specified")
 
             if st.button("Match candidates", key="match_selected_job", type="primary", use_container_width=True):
                 st.session_state.show_matches_for = selected_job_id
@@ -2109,7 +2142,6 @@ elif section == "Job Detail":
                         st.warning("Add required skills to this job before matching candidates.")
                     else:
                         summary = match_data.get("summary", {})
-                        st.caption("Ranking: skills 75% • experience 20% • location 5%. Ties favour stronger skill coverage, fewer gaps, experience, certifications, education, then location.")
                         required_badges = "".join(
                             f"<span style='display:inline-block;margin:0 .3rem 0 0;padding:.18rem .5rem;border:1px solid #c7d2fe;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:.78rem;'>{html.escape(skill)}</span>"
                             for skill in required
@@ -2238,18 +2270,17 @@ elif section == "Job Detail":
                                     st.progress(score)
                                 with info_col:
                                     st.markdown(f"### {html.escape(candidate_match.get('display_name') or candidate_match['candidate_name'])}")
-                                    st.caption(
-                                        f"Hiring score {candidate_match['match_score']}%: "
-                                        f"skills {candidate_match['skill_score_points']}/75, "
-                                        f"experience {candidate_match['experience_score_points']}/20, "
-                                        f"location {candidate_match['location_score_points']}/5"
-                                    )
                                     st.write("**Matched:** " + (", ".join(candidate_match["matched_skills"]) or "None"))
                                     st.write("**Missing:** " + (", ".join(candidate_match["missing_skills"]) or "None"))
                                     with st.expander("View full comparison"):
                                         st.write("**Additional:** " + (", ".join(candidate_match["additional_skills"]) or "None"))
                                         st.write("**Relevant certifications:** " + (", ".join(candidate_match["relevant_certifications"]) or "None"))
                                         st.write("**Education:** " + (", ".join(candidate_match["education"]) or "Not available"))
+                                        education_result = candidate_match.get("education_match")
+                                        if education_result is not None:
+                                            st.write("**Education requirement:** " + ("Met" if education_result else "Not met"))
+                                        if candidate_match.get("education_recommendation"):
+                                            st.info(candidate_match["education_recommendation"])
                                         if candidate_match["missing_skill_recommendations"]:
                                             st.markdown("**Recommendations**")
                                             for recommendation in candidate_match["missing_skill_recommendations"]:
@@ -2338,8 +2369,8 @@ elif section == "Candidate Skill Audit":
                             </div>
                             <div style="position:relative; height:1.1rem; margin-top:3rem; background:#dbeafe; border-radius:999px; overflow:visible;">
                                 <div style="height:100%; width:{hiring_score}%; background:linear-gradient(90deg,#1d4ed8,#3b82f6); border-radius:999px;"></div>
-                                <div style="position:absolute; left:60%; top:-0.45rem; height:2rem; width:2px; background:#1e3a8a;"></div>
-                                <div style="position:absolute; left:60%; top:-1.9rem; transform:translateX(-50%); white-space:nowrap; color:#1e3a8a !important; font-size:0.8rem; font-weight:600;">Shortlist line · 60%</div>
+                                <div style="position:absolute; left:70%; top:-0.45rem; height:2rem; width:2px; background:#1e3a8a;"></div>
+                                <div style="position:absolute; left:70%; top:-1.9rem; transform:translateX(-50%); white-space:nowrap; color:#1e3a8a !important; font-size:0.8rem; font-weight:600;">Shortlist line · 70%</div>
                             </div>
                             <div style="display:flex; justify-content:space-between; margin-top:0.55rem; color:#64748b !important; font-size:0.8rem; font-weight:600;">
                                 <span style="color:#64748b !important;">0</span><span style="color:#64748b !important;">25</span><span style="color:#64748b !important;">50</span><span style="color:#64748b !important;">75</span><span style="color:#64748b !important;">100</span>
@@ -2348,15 +2379,6 @@ elif section == "Candidate Skill Audit":
                         """,
                         unsafe_allow_html=True,
                     )
-                    st.divider()
-                    st.markdown("#### Score composition")
-                    st.write(
-                        f"Skills: **{audit_candidate['skill_score_points']}/75**  |  "
-                        f"Experience: **{audit_candidate['experience_score_points']}/20**  |  "
-                        f"Location: **{audit_candidate['location_score_points']}/5**"
-                    )
-                    st.caption("Location remains a low-priority factor; skills and experience determine most of the hiring score.")
-
                 required_count = len(audit_match_data.get("required_skills", []))
                 metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
                 with metric_col1:
@@ -2399,6 +2421,15 @@ elif section == "Candidate Skill Audit":
                     f"Experience: **{audit_candidate.get('candidate_experience') or 'Not available'} years** — {experience_text}  |  "
                     f"Location: **{audit_candidate.get('candidate_location') or 'Not available'}** — {location_text}"
                 )
+                education_value = audit_candidate.get("education_match")
+                if education_value is not None:
+                    education_text = "Meets requirement" if education_value else "Below requirement"
+                    st.write(
+                        f"Education: **{', '.join(audit_candidate.get('education', [])) or 'Not available'}** "
+                        f"— {education_text} (required: **{audit_candidate.get('required_education')}**)"
+                    )
+                if audit_candidate.get("education_recommendation"):
+                    st.info(audit_candidate["education_recommendation"])
     except requests.RequestException as exc:
         st.error(f"Could not reach the backend: {exc}")
 
